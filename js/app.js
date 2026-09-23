@@ -232,6 +232,46 @@
     render();
   });
 
+  /* ---------- レシートOCR ---------- */
+  const ocrFile = document.getElementById('ocrFile');
+  const ocrProgress = document.getElementById('ocrProgress');
+  const ocrBarFill = document.getElementById('ocrBarFill');
+  const ocrStatus = document.getElementById('ocrStatus');
+  function setOcrProgress(pct, msg) {
+    ocrProgress.classList.remove('hidden');
+    ocrBarFill.style.width = Math.round(pct * 100) + '%';
+    if (msg) ocrStatus.textContent = msg;
+  }
+  document.getElementById('btnOcr').addEventListener('click', () => {
+    if (!window.OCR) { toast('OCR機能を読み込めませんでした'); return; }
+    ocrFile.value = '';
+    ocrFile.click();
+  });
+  ocrFile.addEventListener('change', async () => {
+    const file = ocrFile.files && ocrFile.files[0];
+    if (!file) return;
+    try {
+      setOcrProgress(0, 'OCRエンジンを準備中…（初回は数秒かかります）');
+      const text = await window.OCR.recognize(file, setOcrProgress);
+      const r = window.OCR.parse(text);
+      if (r.amount) document.getElementById('txAmount').value = r.amount;
+      if (r.date) document.getElementById('txDate').value = r.date;
+      if (r.payee) document.getElementById('txPayee').value = r.payee;
+      if (r.memo) document.getElementById('txMemo').value = r.memo;
+      txType = 'expense';
+      refreshTxFormType();
+      applyPayeeSuggestion(); // 店舗名からカテゴリ自動提案
+      ocrStatus.textContent = r.amount
+        ? '読み取り完了。内容を確認して保存してください'
+        : '金額を読み取れませんでした。手入力してください';
+      setTimeout(() => ocrProgress.classList.add('hidden'), 4000);
+      if (r.amount) toast('レシートを読み取りました');
+    } catch (err) {
+      ocrProgress.classList.add('hidden');
+      toast('読み取りに失敗しました: ' + (err && err.message ? err.message : 'ネットワークを確認してください'));
+    }
+  });
+
   /* ---------- 共通部品 ---------- */
   function monthNavHtml() {
     return '<div class="month-nav">'

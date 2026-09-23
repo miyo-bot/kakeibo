@@ -212,6 +212,19 @@ table.list tr:hover td { background: var(--surface2); }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .modal-head h2 { font-size: 17px; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+
+/* レシートOCR */
+.ocr-box { margin-bottom: 10px; }
+.btn-ocr {
+  width: 100%; padding: 10px; border: 1px dashed var(--border);
+  background: var(--primary-soft); color: var(--primary);
+  border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.btn-ocr:hover { filter: brightness(.97); }
+.ocr-progress { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.ocr-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.ocr-bar-fill { height: 100%; width: 0; background: var(--primary); transition: width .25s; }
+.ocr-status { font-size: 12px; color: var(--text-sub); white-space: nowrap; }
 @media (max-width: 700px) {
   .modal { align-items: flex-end; padding: 0; }
   .modal-card { border-radius: 16px 16px 0 0; max-width: 100%; max-height: 92vh; }

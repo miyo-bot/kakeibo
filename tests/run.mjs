@@ -15,12 +15,14 @@ load('classify.js');
 load('insights.js');
 load('nlq.js');
 load('csv.js');
+load('ocr.js');
 
 const S = globalThis.Store;
 const Classify = globalThis.Classify;
 const Insights = globalThis.Insights;
 const NLQ = globalThis.NLQ;
 const CSV = globalThis.KakeiboCSV;
+const OCR = globalThis.OCR;
 
 function fresh() {
   S._setState(S._defaultState());
@@ -236,6 +238,33 @@ await test('検索: 複合フィルタ（期間・金額・タグ・除外）', 
   assert.equal(S.search({ tag: '仕事' }).length, 1);
   assert.equal(S.search({ exclude: 'only' }).length, 1);
   assert.equal(S.search({ exclude: 'hide' }).length, 2);
+});
+
+await test('OCR: コンビニレシートから日付・合計・店舗・品目を抽出', () => {
+  const r = OCR.parse('セブン-イレブン 東京店\n2026年9月10日\nおにぎり 120\nお茶 150\n合計 270\nお預り 500\nお釣り 230');
+  assert.equal(r.date, '2026-09-10');
+  assert.equal(r.amount, 270);
+  assert.equal(r.payee, 'セブン-イレブン東京店');
+  assert.ok(r.memo.includes('おにぎり'));
+});
+
+await test('OCR: 和暦・カンマ金額・お釣り除外', () => {
+  const r = OCR.parse('ENEOS SS 新宿\n令和7年9月20日\nレギュラー 165\n合計 ¥5,032\nお預かり 10,000\nお釣り 4,968');
+  assert.equal(r.date, '2025-09-20'); // 令和7年
+  assert.equal(r.amount, 5032);       // お預かり・お釣りは除外
+  assert.equal(r.payee, 'ENEOS SS 新宿'); // 英字間の空白は保持
+});
+
+await test('OCR: 合計キーワードなしでも最大金額を推定', () => {
+  const r = OCR.parse('マルエツ 渋谷店\n牛乳 298\nパン 158\n卵 328');
+  assert.equal(r.amount, 328);
+  assert.equal(r.payee, 'マルエツ渋谷店'); // OCR空白は日本語間では除去
+});
+
+await test('OCR: 読み取り不能でも例外を投げずnullを返す', () => {
+  const r = OCR.parse('あいうえお\nかきくけこ');
+  assert.equal(r.amount, null);
+  assert.equal(r.date, null);
 });
 
 console.log('\n✅ すべてのテストが完了しました');
