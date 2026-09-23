@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kakeibo - 家計簿</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="app-header">
+  <div class="header-inner">
+    <h1 class="logo">📒 Kakeibo</h1>
+    <nav class="tabs" id="tabs">
+      <button data-view="dashboard" class="tab active">ダッシュボード</button>
+      <button data-view="transactions" class="tab">取引</button>
+      <button data-view="calendar" class="tab">カレンダー</button>
+      <button data-view="budget" class="tab">予算</button>
+      <button data-view="recurring" class="tab">固定費</button>
+      <button data-view="settings" class="tab">設定</button>
+    </nav>
+    <div class="header-actions">
+      <button id="btnAddTx" class="btn btn-primary">＋ 記録する</button>
+      <button id="btnTheme" class="btn btn-icon" title="テーマ切替">🌙</button>
+    </div>
+  </div>
+</header>
+
+<main id="main"></main>
+
+<!-- 取引入力モーダル -->
+<div id="txModal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="txModalTitle">取引を記録</h2>
+      <button class="btn btn-icon" id="txModalClose">✕</button>
+    </div>
+    <div class="type-switch" id="txTypeSwitch">
+      <button type="button" data-type="expense" class="active">支出</button>
+      <button type="button" data-type="income">収入</button>
+      <button type="button" data-type="transfer">振替</button>
+    </div>
+    <form id="txForm" class="tx-form">
+      <input type="hidden" id="txId">
+      <label>日付
+        <input type="date" id="txDate" required>
+      </label>
+      <label>金額
+        <input type="number" id="txAmount" min="1" step="1" required placeholder="0">
+      </label>
+      <label id="txCategoryWrap">カテゴリ
+        <select id="txCategory"></select>
+      </label>
+      <label id="txAccountWrap">口座
+        <select id="txAccount"></select>
+      </label>
+      <div id="txTransferWrap" class="hidden span2">
+        <label>振替元
+          <select id="txFromAccount"></select>
+        </label>
+        <label>振替先
+          <select id="txToAccount"></select>
+        </label>
+      </div>
+      <label class="span2">メモ
+        <input type="text" id="txMemo" placeholder="例: スーパーで買い物">
+      </label>
+      <div class="modal-foot span2">
+        <button type="button" class="btn" id="txModalCancel">キャンセル</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 確認モーダル -->
+<div id="confirmModal" class="modal hidden">
+  <div class="modal-card modal-small">
+    <div class="modal-head"><h2>確認</h2></div>
+    <p id="confirmText"></p>
+    <div class="modal-foot">
+      <button class="btn" id="confirmCancel">キャンセル</button>
+      <button class="btn btn-danger" id="confirmOk">削除</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="js/store.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
+
