@@ -2,7 +2,9 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#2563eb">
 <title>Kakeibo - 家計簿</title>
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -10,48 +12,51 @@
 <header class="app-header">
   <div class="header-inner">
     <h1 class="logo">📒 Kakeibo</h1>
-    <nav class="tabs" id="tabs">
-      <button data-view="dashboard" class="tab active">ダッシュボード</button>
-      <button data-view="transactions" class="tab">取引</button>
-      <button data-view="calendar" class="tab">カレンダー</button>
-      <button data-view="budget" class="tab">予算</button>
-      <button data-view="recurring" class="tab">固定費</button>
-      <button data-view="settings" class="tab">設定</button>
-    </nav>
+    <nav class="tabs" id="tabs"></nav>
     <div class="header-actions">
-      <button id="btnAddTx" class="btn btn-primary">＋ 記録する</button>
-      <button id="btnTheme" class="btn btn-icon" title="テーマ切替">🌙</button>
+      <button id="btnAddTx" class="btn btn-primary">＋ 記録</button>
+      <button id="btnTheme" class="btn btn-icon" title="テーマ切替" aria-label="テーマ切替">🌙</button>
     </div>
   </div>
 </header>
 
-<main id="main"></main>
+<main id="main"><div class="loading-skeleton" aria-busy="true"></div></main>
+
+<!-- モバイル下部ナビ -->
+<nav class="bottom-nav" id="bottomNav" aria-label="メイン"></nav>
+<!-- モバイルFAB -->
+<button id="fab" class="fab" aria-label="記録する">＋</button>
 
 <!-- 取引入力モーダル -->
-<div id="txModal" class="modal hidden">
+<div id="txModal" class="modal hidden" role="dialog" aria-modal="true">
   <div class="modal-card">
     <div class="modal-head">
       <h2 id="txModalTitle">取引を記録</h2>
-      <button class="btn btn-icon" id="txModalClose">✕</button>
+      <button class="btn btn-icon" id="txModalClose" aria-label="閉じる">✕</button>
     </div>
+    <div id="tplChips" class="quick-chips"></div>
     <div class="type-switch" id="txTypeSwitch">
       <button type="button" data-type="expense" class="active">支出</button>
       <button type="button" data-type="income">収入</button>
       <button type="button" data-type="transfer">振替</button>
     </div>
-    <form id="txForm" class="tx-form">
+    <form id="txForm" class="tx-form" autocomplete="off">
       <input type="hidden" id="txId">
-      <label>日付
-        <input type="date" id="txDate" required>
+      <label class="span2">金額
+        <input type="number" id="txAmount" min="1" step="1" inputmode="numeric" required placeholder="0">
       </label>
-      <label>金額
-        <input type="number" id="txAmount" min="1" step="1" required placeholder="0">
+      <label class="span2">店舗・支払い先
+        <input type="text" id="txPayee" list="payeeList" placeholder="例: イオン、Amazon、家賃">
+        <datalist id="payeeList"></datalist>
       </label>
-      <label id="txCategoryWrap">カテゴリ
+      <label id="txCategoryWrap" class="span2">カテゴリ
         <select id="txCategory"></select>
       </label>
-      <label id="txAccountWrap">口座
+      <label id="txAccountWrap">支払い元
         <select id="txAccount"></select>
+      </label>
+      <label>日付
+        <input type="date" id="txDate" required>
       </label>
       <div id="txTransferWrap" class="hidden span2">
         <label>振替元
@@ -61,10 +66,21 @@
           <select id="txToAccount"></select>
         </label>
       </div>
-      <label class="span2">メモ
-        <input type="text" id="txMemo" placeholder="例: スーパーで買い物">
-      </label>
+      <details class="span2 tx-details">
+        <summary>詳細（メモ・タグ・除外）</summary>
+        <label class="span2">メモ
+          <input type="text" id="txMemo" placeholder="例: 夜ご飯の買い物">
+        </label>
+        <label class="span2">タグ（カンマ区切り）
+          <input type="text" id="txTags" placeholder="例: 仕事, 旅行">
+        </label>
+        <label class="span2 check-row">
+          <input type="checkbox" id="txExclude">
+          <span>集計から除外する（立替・返金など）</span>
+        </label>
+      </details>
       <div class="modal-foot span2">
+        <button type="button" class="btn btn-sm" id="txSaveTpl">⚡ 定型に保存</button>
         <button type="button" class="btn" id="txModalCancel">キャンセル</button>
         <button type="submit" class="btn btn-primary">保存</button>
       </div>
@@ -73,10 +89,11 @@
 </div>
 
 <!-- 確認モーダル -->
-<div id="confirmModal" class="modal hidden">
+<div id="confirmModal" class="modal hidden" role="dialog" aria-modal="true">
   <div class="modal-card modal-small">
     <div class="modal-head"><h2>確認</h2></div>
     <p id="confirmText"></p>
+    <div id="confirmDetail" class="muted" style="margin:8px 0 0"></div>
     <div class="modal-foot">
       <button class="btn" id="confirmCancel">キャンセル</button>
       <button class="btn btn-danger" id="confirmOk">削除</button>
@@ -84,11 +101,24 @@
   </div>
 </div>
 
-<div id="toast" class="toast hidden"></div>
+<!-- 汎用シート（モバイルメニュー等） -->
+<div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-card">
+    <div class="sheet-head"><h3 id="sheetTitle">メニュー</h3><button class="btn btn-icon" id="sheetClose">✕</button></div>
+    <div id="sheetBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden" role="status"></div>
 
 <script src="js/store.js"></script>
+<script src="js/classify.js"></script>
+<script src="js/insights.js"></script>
+<script src="js/nlq.js"></script>
+<script src="js/csv.js"></script>
+<script src="js/providers.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/app.js"></script>
+<script src="js/views.js"></script>
 </body>
 </html>
-
