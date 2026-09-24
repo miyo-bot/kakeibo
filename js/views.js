@@ -768,10 +768,14 @@
     function runCsvPreview(text, fileName) {
       const rows = CSV.parseCSV(text.replace(/^﻿/, ''));
       if (rows.length < 2) { A.toast('CSVにデータがありません'); return; }
-      const head = rows[0].map(h => String(h || '').trim());
+      const headerRow = CSV.findHeaderRow ? CSV.findHeaderRow(rows) : 0;
+      const head = rows[headerRow].map(h => String(h || '').trim());
       const mapping = CSV.guessMapping(head);
       const optAccount = document.getElementById('csvAccount').value || null;
-      importPreview = { text, head, mapping, fileName, optAccount };
+      importPreview = { text, head, mapping, fileName, optAccount, headerRow };
+
+      // 先頭にタイトル行等がある場合は通知
+      if (headerRow > 0) A.toast('ヘッダー行を自動検出しました（' + (headerRow + 1) + '行目）');
 
       // 列マッピングUI
       const mapWrap = document.getElementById('csvMapWrap');

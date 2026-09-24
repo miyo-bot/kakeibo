@@ -61,10 +61,10 @@
 
   /* ---------- 列マッピングの自動推定 ---------- */
   const COL_PATTERNS = {
-    date:   /日付|date|取引日|利用日|ご利用日/i,
+    date:   /日付|date|取引日|利用日|ご利用日|年月日|利用年月日|ご利用年月日/i,
     amount: /金額|amount|利用金額|支払金額|出金|入金|金額（円）/i,
     type:   /種別|type|入出金|収支/i,
-    payee:  /店舗|利用店|加盟店|merchant|payee|摘要|内容|取引内容|利用先/i,
+    payee:  /店舗|利用店|加盟店|merchant|payee|摘要|内容|取引内容|利用先|利用場所|ご利用場所/i,
     memo:   /メモ|memo|備考|摘要|内容/i,
     category: /カテゴリ|大項目|中項目|分類/i,
     account: /口座|保有金融機関|金融機関|account|カード/i,
@@ -78,6 +78,26 @@
       if (idx >= 0) map[key] = idx;
     }
     return map;
+  }
+
+  /* ---------- ヘッダー行の自動検出 ----------
+   * エポスカード等、1行目がタイトル行でヘッダーが2行目以降にあるCSVに対応。
+   * 先頭から10行まで走査し、日付+金額が揃う行をヘッダーとみなす。
+   */
+  function findHeaderRow(rows) {
+    let best = 0, bestScore = -1;
+    const limit = Math.min(rows.length, 10);
+    for (let i = 0; i < limit; i++) {
+      const head = rows[i].map(h => String(h || '').trim());
+      const map = guessMapping(head);
+      let score = 0;
+      if (map.date != null) score += 2;
+      if (map.amount != null) score += 2;
+      score += Object.keys(map).length;
+      if (score > bestScore) { bestScore = score; best = i; }
+      if (map.date != null && map.amount != null) break; // 十分
+    }
+    return best;
   }
 
   /* ---------- 行 → 取引 ---------- */
@@ -118,6 +138,7 @@
   // findOrCreate helpers
   function findOrCreateCategory(name, type) {
     name = name || '';
+    if (/^[\-‐‑–—―−ｰ－─━]+$/.test(name)) name = ''; // 「－」のみは未分類扱い
     if (name) {
       const c = S().catByName(name, type);
       if (c) return c;
@@ -143,23 +164,27 @@
   function preview(text, mapping, options) {
     options = options || {};
     const rows = parseCSV(text.replace(/^﻿/, ''));
-    if (!rows.length) return { txs: [], errors: [], dupCount: 0, newCount: 0, head: [] };
-    const head = rows[0].map(h => String(h || '').trim());
+    if (!rows.length) return { txs: [], errors: [], dupCount: 0, newCount: 0, head: [], headerRow: 0 };
+    const headerRow = findHeaderRow(rows);
+    const head = rows[headerRow].map(h => String(h || '').trim());
     const isMF = head.includes('大項目') && head.includes('金額（円）');
     const map = mapping || guessMapping(head);
     const seen = S().existingFingerprints();
     const txs = [], errors = [];
     let dupCount = 0;
 
-    const body = rows.slice(1);
+    const body = rows.slice(headerRow + 1);
     for (let i = 0; i < body.length; i++) {
       const r = body[i];
+      // 注釈・合計・空行など実質的な取引行でない行は静かにスキップ
+      if (r.filter(c => String(c || '').trim()).length < 3) continue;
       const built = buildTx(r, head, map, { ...options, mfMode: isMF });
       if (built.skip) continue;
-      if (built.error) { errors.push({ row: i + 2, error: built.error }); continue; }
+      if (built.error) { errors.push({ row: headerRow + i + 2, error: built.error }); continue; }
       // カテゴリ・口座を解決
       const type = built.type === 'transfer' ? null : built.type;
-      const cat = type ? findOrCreateCategory(built._catName, type) : null;
+      const hasCat = built._catName && !/^[\-‐‑–—―−ｰ－─━]+$/.test(built._catName);
+      const cat = (type && hasCat) ? findOrCreateCategory(built._catName, type) : null;
       const acc = findOrCreateAccount(built._accName);
       const tx = {
         date: built.date, type: built.type, amount: built.amount,
@@ -178,7 +203,7 @@
       seen.add(fp);
       txs.push(tx);
     }
-    return { txs, errors, dupCount, newCount: txs.length, head, isMF };
+    return { txs, errors, dupCount, newCount: txs.length, head, headerRow, isMF };
   }
 
   /* ---------- 実行 ---------- */
@@ -192,7 +217,7 @@
     return { count: ids.length, batchId: batch.id };
   }
 
-  const api = { parseCSV, normDate, normAmount, guessMapping, buildTx, preview, commit, findOrCreateCategory, findOrCreateAccount };
+  const api = { parseCSV, normDate, normAmount, guessMapping, findHeaderRow, buildTx, preview, commit, findOrCreateCategory, findOrCreateAccount };
   if (typeof window !== 'undefined') window.KakeiboCSV = api;
   globalThis.KakeiboCSV = api;
 })();

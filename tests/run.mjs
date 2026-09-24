@@ -267,4 +267,22 @@ await test('OCR: 読み取り不能でも例外を投げずnullを返す', () =>
   assert.equal(r.date, null);
 });
 
+await test('CSV: エポスカード形式（タイトル行+年月日日付+SJIS想定）を検出', () => {
+  fresh();
+  const text = '月別ご利用明細　テスト　様　株式会社エポスカード,,,,,,,\n'
+    + '種別（ショッピング、キャッシング、その他）,ご利用年月日,ご利用場所,ご利用内容,ご利用金額（キャッシングでは元金になります）,支払区分,お支払開始月,備考\n'
+    + 'ショッピング,2026年1月1日,ニンテンドーＥショップ,－,306,1回払い,2026年2月,\n'
+    + 'ショッピング,2026年1月2日,ハロ－デイ,－,558,1回払い,2026年2月,\n'
+    + 'ショッピング合計,,,,864,,,\n'
+    + '※１　注釈行,,,,,,,';
+  const res = CSV.preview(text);
+  assert.equal(res.headerRow, 1);
+  assert.equal(res.newCount, 2);
+  assert.equal(res.errors.length, 0); // 合計行・注釈行はスキップ
+  assert.equal(res.txs[0].date, '2026-01-01');
+  assert.equal(res.txs[0].payee, 'ニンテンドーＥショップ');
+  const game = S.catByName('娯楽', 'expense');
+  assert.equal(res.txs[0].categoryId, game.id); // 辞書で自動分類
+});
+
 console.log('\n✅ すべてのテストが完了しました');
