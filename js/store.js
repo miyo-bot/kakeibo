@@ -9,7 +9,7 @@
   const LS_KEY = 'kakeibo.v1';
   const IDB_NAME = 'kakeibo';
   const IDB_STORE = 'kv';
-  const SCHEMA_VERSION = 2;
+  const SCHEMA_VERSION = 3;
 
   const uid = () => (globalThis.crypto && crypto.randomUUID)
     ? crypto.randomUUID()
@@ -21,10 +21,14 @@
     ['交通', '#22c55e', '🚃'], ['車', '#14b8a6', '🚗'], ['医療', '#ef4444', '💊'],
     ['娯楽', '#ec4899', '🎮'], ['衣服・美容', '#d946ef', '👕'], ['教育', '#6366f1', '📚'],
     ['交際', '#f43f5e', '🍻'], ['その他', '#64748b', '📦'],
+    // 事業用（個人事業主・副業の経費）
+    ['消耗品費', '#0891b2', '🖊️'], ['旅費交通費', '#65a30d', '🧳'], ['会議・接待費', '#c026d3', '🤝'],
+    ['広告宣伝費', '#ea580c', '📣'], ['外注費', '#7c3aed', '🧑‍💻'], ['地代家賃', '#be185d', '🏢'],
+    ['雑費（事業）', '#475569', '🧾'],
   ];
   const DEFAULT_INCOME_CATS = [
     ['給与', '#059669', '💼'], ['副業', '#10b981', '💻'], ['賞与', '#34d399', '🎁'],
-    ['投資', '#0ea5e9', '📈'], ['その他収入', '#64748b', '💴'],
+    ['投資', '#0ea5e9', '📈'], ['事業収入', '#16a34a', '🏪'], ['その他収入', '#64748b', '💴'],
   ];
 
   const ACCOUNT_KINDS = {
@@ -76,6 +80,20 @@
     for (const a of out.accounts) {
       if (!a.kind) a.kind = 'other';
       if (a.initialBalance === undefined) a.initialBalance = 0;
+    }
+    // バージョンアップ時のみ、デフォルトカテゴリのうち未作成のものを追加
+    // （ユーザーが削除したカテゴリは同一バージョン内では復活させない）
+    if ((s.version || 0) < SCHEMA_VERSION) {
+      for (const [name, color, icon] of DEFAULT_EXPENSE_CATS) {
+        if (!out.categories.some(c => c.name === name && c.type === 'expense')) {
+          out.categories.push({ id: uid(), name, color, icon, type: 'expense' });
+        }
+      }
+      for (const [name, color, icon] of DEFAULT_INCOME_CATS) {
+        if (!out.categories.some(c => c.name === name && c.type === 'income')) {
+          out.categories.push({ id: uid(), name, color, icon, type: 'income' });
+        }
+      }
     }
     out.version = SCHEMA_VERSION;
     return out;

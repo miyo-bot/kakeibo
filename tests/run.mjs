@@ -224,7 +224,7 @@ await test('v1→v2 マイグレーションで新フィールドが補完され
   assert.equal(t.payee, '');
   assert.deepEqual(t.tags, []);
   assert.equal(t.exclude, false);
-  assert.equal(S.state.version, 2);
+  assert.equal(S.state.version, 3);
 });
 
 await test('検索: 複合フィルタ（期間・金額・タグ・除外）', () => {
@@ -283,6 +283,24 @@ await test('CSV: エポスカード形式（タイトル行+年月日日付+SJIS
   assert.equal(res.txs[0].payee, 'ニンテンドーＥショップ');
   const game = S.catByName('娯楽', 'expense');
   assert.equal(res.txs[0].categoryId, game.id); // 辞書で自動分類
+});
+
+await test('マイグレーション: v2→v3で事業用カテゴリが追加され、同一バージョンでは削除が復活しない', () => {
+  // v2相当のデータを用意（事業カテゴリなし）
+  const v2 = S._defaultState();
+  v2.version = 2;
+  v2.categories = v2.categories.filter(c => !/費|事業収入/.test(c.name));
+  S._setState(v2);
+  assert.ok(S.catByName('消耗品費', 'expense'), '消耗品費が追加される');
+  assert.ok(S.catByName('旅費交通費', 'expense'));
+  assert.ok(S.catByName('事業収入', 'income'));
+
+  // v3で削除したカテゴリは復活しない
+  const st = S.state;
+  st.categories = st.categories.filter(c => c.name !== '消耗品費');
+  st.version = 3;
+  S._setState(st);
+  assert.equal(S.catByName('消耗品費', 'expense'), undefined, '同一バージョンでは復活しない');
 });
 
 console.log('\n✅ すべてのテストが完了しました');
