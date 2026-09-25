@@ -61,7 +61,7 @@
     const invest = byKind.invest || 0;
     const cardDebt = S.cardDebt();
     const totalAssets = S.totalAssets();
-    const assetSub = S.state.accounts.map(a => esc(a.name) + ' ' + yen(S.accountBalance(a.id))).join(' / ');
+    const assetSub = S.state.accounts.map(a => esc(a.name) + ' ' + yen(a.kind === 'invest' ? S.valuedBalance(a.id) : S.accountBalance(a.id))).join(' / ');
 
     // 前月比
     const prevTot = S.monthTotals(I.shiftYm(ym, -1));
@@ -296,16 +296,13 @@
       const ba = bar.querySelector('#bulkAcc');
       if (bc) bc.addEventListener('change', () => {
         const cid = bc.value; if (!cid) return;
+        if ([...selected].some(id => {
+          const t = S.state.transactions.find(x => x.id === id);
+          return t && t.type !== 'expense';
+        })) { A.toast('支出以外が含まれます。支出だけを選択してください'); bc.value = ''; return; }
         const n = selected.size;
         A.confirmBox(n + '件のカテゴリを「' + esc(S.catById(cid).name) + '」に変更しますか？', '変更', () => {
           const before = S.bulkUpdate([...selected], { categoryId: cid });
-          const payees = new Set();
-          for (const id of selected) {
-            const t = S.state.transactions.find(t => t.id === id);
-            if (t && t.payee) payees.add(t.payee);
-          }
-          // 店舗ルールを学習（選択中の店舗ごと）
-          for (const p of payees) window.Classify.learn({ payee: p }, cid);
           selected.clear();
           A.toast(n + '件を変更しました', { actionLabel: '元に戻す', onAction: () => { S.restoreTxList(before); A.render(); } });
           A.render();
@@ -313,6 +310,10 @@
       });
       if (ba) ba.addEventListener('change', () => {
         const aid = ba.value; if (!aid) return;
+        if ([...selected].some(id => {
+          const t = S.state.transactions.find(x => x.id === id);
+          return t && t.type === 'transfer';
+        })) { A.toast('振替は口座の一括変更に対応していません'); ba.value = ''; return; }
         const n = selected.size;
         A.confirmBox(n + '件の口座を「' + esc(S.accById(aid).name) + '」に変更しますか？', '変更', () => {
           const before = S.bulkUpdate([...selected], { accountId: aid });
@@ -473,7 +474,9 @@
     main.querySelectorAll('[data-savebudget]').forEach(b => b.addEventListener('click', () => {
       const cid = b.dataset.savebudget;
       const input = main.querySelector('input[data-budget="' + cid + '"]');
-      S.setBudget(cid, Number(input.value) || 0);
+      const amount = input.value === '' ? 0 : Number(input.value);
+      if (!Number.isSafeInteger(amount) || amount < 0) { A.toast('予算は0以上の整数で入力してください'); return; }
+      S.setBudget(cid, amount);
       A.toast('予算を保存しました');
       renderBudget();
     }));
@@ -526,22 +529,18 @@
   function renderAssets() {
     const accs = S.state.accounts;
     const byKind = S.balanceByKind();
-    const monthEnd = S.monthEndBalances();
-
-    // 月次資産推移（直近12ヶ月、月末残高合計）
+    // 月次資産推移（直近12ヶ月、各月末の残高と評価額）
     const months = [];
     for (let i = 11; i >= 0; i--) months.push(I.shiftYm(A.nowYm(), -i));
     const trend = months.map(m => {
-      const map = monthEnd.get(m);
-      let sum = 0;
-      if (map) for (const v of map.values()) sum += v;
-      else sum = S.totalAssets(); // 当月は現在値
-      return { label: m.slice(5) + '月', y: sum, x: 0 };
+      const [year, month] = m.split('-').map(Number);
+      const date = m + '-' + String(new Date(year, month, 0).getDate()).padStart(2, '0');
+      return { label: m.slice(5) + '月', y: S.totalAssetsAt(date), x: 0 };
     });
     trend.forEach((p, i) => p.x = i);
 
     let html = '<div class="panel"><h3>💰 資産状況</h3>'
-      + '<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">'
+      + '<div class="kpi-grid asset-kpis">'
       + '<div class="kpi"><div class="label">総資産</div><div class="value">' + yen(S.totalAssets()) + '</div></div>'
       + '<div class="kpi"><div class="label">現金・預金・電子マネー</div><div class="value">' + yen((byKind.cash||0)+(byKind.bank||0)+(byKind.emoney||0)) + '</div></div>'
       + '<div class="kpi"><div class="label">投資資産</div><div class="value">' + yen(byKind.invest||0) + '</div></div>'
@@ -552,7 +551,7 @@
     // 口座一覧
     html += '<div class="panel"><h3>口座一覧</h3>'
       + accs.map(a => {
-        const bal = S.accountBalance(a.id);
+        const bal = a.kind === 'invest' ? S.valuedBalance(a.id) : S.accountBalance(a.id);
         const kind = S.ACCOUNT_KINDS[a.kind] || a.kind;
         let extra = '';
         if (a.kind === 'invest') {
@@ -589,8 +588,9 @@
       const cur = S.latestSnapshot(a.id);
       const val = prompt(a.name + ' の現在の評価額を入力してください', cur ? cur.value : '');
       if (val === null) return;
-      const n = Number(String(val).replace(/[^0-9]/g, ''));
-      if (!n) { A.toast('金額を入力してください'); return; }
+      const raw = String(val).trim().replace(/[¥￥,\s]/g, '');
+      const n = Number(raw);
+      if (!/^\d+$/.test(raw) || !Number.isSafeInteger(n)) { A.toast('評価額は0以上の整数で入力してください'); return; }
       S.setAssetSnapshot(a.id, A.todayStr(), n);
       A.toast('評価額を記録しました');
       renderAssets();
@@ -598,7 +598,9 @@
     document.getElementById('naAdd').addEventListener('click', () => {
       const name = document.getElementById('naName').value.trim();
       if (!name) { A.toast('口座名を入力してください'); return; }
-      S.addAccount({ name, kind: document.getElementById('naKind').value, initialBalance: Number(document.getElementById('naBal').value) || 0 });
+      const balance = Number(document.getElementById('naBal').value || 0);
+      if (!Number.isSafeInteger(balance)) { A.toast('初期残高は整数で入力してください'); return; }
+      S.addAccount({ name, kind: document.getElementById('naKind').value, initialBalance: balance });
       A.toast('口座を追加しました');
       renderAssets();
     });
@@ -672,8 +674,9 @@
     document.getElementById('rAdd').addEventListener('click', () => {
       const day = Number(document.getElementById('rDay').value);
       const amount = Number(document.getElementById('rAmount').value);
-      if (!day || day < 1 || day > 31 || !amount) { A.toast('日と金額を入力してください'); return; }
+      if (!Number.isInteger(day) || day < 1 || day > 31 || !Number.isSafeInteger(amount) || amount <= 0) { A.toast('日と1円以上の整数金額を入力してください'); return; }
       const type = rType.value;
+      if (type === 'transfer' && document.getElementById('rAcc').value === rToAcc.value) { A.toast('振替元と振替先を別の口座にしてください'); return; }
       const r = {
         type, day, amount,
         categoryId: type === 'transfer' ? null : rCat.value,
@@ -753,7 +756,9 @@
     document.getElementById('csvFile').addEventListener('change', e => {
       const f = e.target.files[0];
       if (!f) return;
+      if (f.size > 50 * 1024 * 1024) { A.toast('CSVは50MB以下にしてください'); e.target.value = ''; return; }
       const reader = new FileReader();
+      reader.onerror = () => A.toast('CSVを読み込めませんでした');
       reader.onload = () => {
         const buf = reader.result;
         let text;
@@ -766,7 +771,9 @@
     });
 
     function runCsvPreview(text, fileName) {
-      const rows = CSV.parseCSV(text.replace(/^﻿/, ''));
+      let rows;
+      try { rows = CSV.parseCSV(text.replace(/^﻿/, '')); }
+      catch (err) { A.toast('CSV形式を確認してください: ' + err.message); return; }
       if (rows.length < 2) { A.toast('CSVにデータがありません'); return; }
       const headerRow = CSV.findHeaderRow ? CSV.findHeaderRow(rows) : 0;
       const head = rows[headerRow].map(h => String(h || '').trim());
@@ -780,7 +787,7 @@
       // 列マッピングUI
       const mapWrap = document.getElementById('csvMapWrap');
       mapWrap.classList.remove('hidden');
-      const fields = [['date', '日付'], ['amount', '金額'], ['type', '種別'], ['payee', '店舗/内容'], ['memo', 'メモ'], ['category', 'カテゴリ'], ['account', '口座']];
+      const fields = [['date', '日付'], ['amount', '金額'], ['type', '種別'], ['payee', '店舗/内容'], ['memo', 'メモ'], ['category', 'カテゴリ'], ['account', '口座'], ['fromAccount', '振替元'], ['toAccount', '振替先']];
       document.getElementById('csvMap').innerHTML = fields.map(([k, label]) =>
         '<label style="flex:0 0 130px;font-size:12px">' + label
         + '<select data-map="' + k + '"><option value="">（なし）</option>'
@@ -816,10 +823,12 @@
       box.innerHTML = h;
       const btn = document.getElementById('csvCommit');
       if (btn) btn.addEventListener('click', () => {
-        const r = CSV.commit(p.txs, p.fileName);
-        A.toast(r.count + '件インポートしました');
-        importPreview = null;
-        renderData();
+        try {
+          const r = CSV.commit(p.txs, p.fileName);
+          A.toast(r.count + '件インポートしました');
+          importPreview = null;
+          renderData();
+        } catch (err) { A.toast('インポートに失敗しました: ' + err.message); }
       });
     }
 
@@ -937,8 +946,9 @@
       });
     }));
     main.querySelectorAll('[data-delacc]').forEach(b => b.addEventListener('click', () => {
-      A.confirmBox('口座を削除しますか？（残高計算から外れます）', '削除', () => {
-        S.deleteAccount(b.dataset.delacc); renderSettings();
+      A.confirmBox('口座を削除しますか？', '削除', () => {
+        try { S.deleteAccount(b.dataset.delacc); renderSettings(); }
+        catch (err) { A.toast(err.message); }
       });
     }));
     main.querySelectorAll('[data-delrule]').forEach(b => b.addEventListener('click', () => {
@@ -956,7 +966,9 @@
     document.getElementById('naAdd').addEventListener('click', () => {
       const name = document.getElementById('naName').value.trim();
       if (!name) { A.toast('口座名を入力してください'); return; }
-      S.addAccount({ name, kind: document.getElementById('naKind').value, initialBalance: Number(document.getElementById('naBal').value) || 0 });
+      const balance = Number(document.getElementById('naBal').value || 0);
+      if (!Number.isSafeInteger(balance)) { A.toast('初期残高は整数で入力してください'); return; }
+      S.addAccount({ name, kind: document.getElementById('naKind').value, initialBalance: balance });
       A.toast('口座を追加しました'); renderSettings();
     });
     document.getElementById('btnSeed').addEventListener('click', () => {

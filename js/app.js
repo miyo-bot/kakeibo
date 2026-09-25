@@ -10,7 +10,7 @@
   const esc = s => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  const yen = n => '¥' + Number(n || 0).toLocaleString();
+  const yen = n => (Number(n) < 0 ? '-' : '') + '¥' + Math.abs(Number(n || 0)).toLocaleString();
   const pad2 = n => String(n).padStart(2, '0');
   const todayStr = () => {
     const d = new Date();
@@ -83,18 +83,20 @@
 
   /* ---------- 取引モーダル ---------- */
   const txModal = document.getElementById('txModal');
-  function fillSelect(sel, items, selected) {
-    sel.innerHTML = items.map(i => '<option value="' + i.id + '"' + (i.id === selected ? ' selected' : '') + '>' + esc(i.name) + '</option>').join('');
+  function fillSelect(sel, items, selected, blank) {
+    sel.innerHTML = (blank ? '<option value=""' + (!selected ? ' selected' : '') + '>未分類</option>' : '')
+      + items.map(i => '<option value="' + i.id + '"' + (i.id === selected ? ' selected' : '') + '>' + esc(i.name) + '</option>').join('');
   }
   function refreshTxFormType() {
     document.querySelectorAll('#txTypeSwitch button').forEach(b =>
       b.classList.toggle('active', b.dataset.type === txType));
     const isTransfer = txType === 'transfer';
     document.getElementById('txCategoryWrap').classList.toggle('hidden', isTransfer);
+    document.getElementById('txLearnRuleWrap').classList.toggle('hidden', isTransfer);
     document.getElementById('txAccountWrap').classList.toggle('hidden', isTransfer);
     document.getElementById('txTransferWrap').classList.toggle('hidden', !isTransfer);
     if (!isTransfer) {
-      fillSelect(document.getElementById('txCategory'), S.catsOf(txType), document.getElementById('txCategory').value);
+      fillSelect(document.getElementById('txCategory'), S.catsOf(txType), document.getElementById('txCategory').value, true);
     }
     fillSelect(document.getElementById('txAccount'), S.state.accounts, document.getElementById('txAccount').value);
     fillSelect(document.getElementById('txFromAccount'), S.state.accounts, document.getElementById('txFromAccount').value);
@@ -107,16 +109,44 @@
   // 店舗入力 → カテゴリ自動提案
   function applyPayeeSuggestion() {
     const payee = document.getElementById('txPayee').value.trim();
-    if (!payee || txType === 'transfer') return;
+    if (txType === 'transfer') return;
+    const select = document.getElementById('txCategory');
+    const box = document.getElementById('txCategorySuggestion');
+    if (!payee) {
+      select.value = '';
+      delete select.dataset.suggested;
+      delete select.dataset.confidence;
+      box.innerHTML = '';
+      return;
+    }
     const sug = window.Classify.suggest({ payee, type: txType });
-    if (sug.categoryId) {
-      document.getElementById('txCategory').value = sug.categoryId;
-      const sel = document.getElementById('txCategory');
-      sel.dataset.suggested = sug.source;
+    const candidates = window.Classify.candidates({ payee, type: txType }, 3);
+    if (sug.categoryId && sug.confidence >= 0.8 && sug.source !== 'fallback') {
+      select.value = sug.categoryId;
+      select.dataset.suggested = sug.source;
+      select.dataset.confidence = String(sug.confidence || 0);
+      box.innerHTML = '<small>推奨: ' + esc(S.catById(sug.categoryId).name) + ' · 確信度 ' + Math.round(sug.confidence * 100) + '% (' + esc(sug.label) + ')</small>';
+    } else {
+      select.value = '';
+      delete select.dataset.suggested;
+      delete select.dataset.confidence;
+      box.innerHTML = candidates.length ? '<small>候補をタップして選択</small><span>' + candidates.map(item => '<button type="button" class="quick-chip" data-tx-candidate="' + item.categoryId + '">' + esc(S.catById(item.categoryId).name) + ' ' + Math.round(item.confidence * 100) + '%</button>').join('') + '</span>' : '';
     }
   }
   document.getElementById('txPayee').addEventListener('input', applyPayeeSuggestion);
   document.getElementById('txPayee').addEventListener('change', applyPayeeSuggestion);
+  document.getElementById('txCategory').addEventListener('change', e => {
+    delete e.currentTarget.dataset.suggested;
+    delete e.currentTarget.dataset.confidence;
+    document.getElementById('txCategorySuggestion').innerHTML = '';
+  });
+  document.getElementById('txCategorySuggestion').addEventListener('click', e => {
+    const button = e.target.closest('[data-tx-candidate]');
+    if (!button) return;
+    const select = document.getElementById('txCategory');
+    select.value = button.dataset.txCandidate;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
 
   function renderTplChips() {
     const box = document.getElementById('tplChips');
@@ -149,6 +179,12 @@
     document.getElementById('txMemo').value = tx ? (tx.memo || '') : '';
     document.getElementById('txTags').value = tx ? (tx.tags || []).join(', ') : '';
     document.getElementById('txExclude').checked = tx ? !!tx.exclude : false;
+    document.getElementById('txLearnRule').checked = false;
+    const categorySelect = document.getElementById('txCategory');
+    categorySelect.value = tx ? (tx.categoryId || '') : '';
+    delete categorySelect.dataset.suggested;
+    delete categorySelect.dataset.confidence;
+    document.getElementById('txCategorySuggestion').innerHTML = '';
     txType = tx ? tx.type : 'expense';
     refreshTxFormType();
     refreshPayeeList();
@@ -170,6 +206,7 @@
     if (!b) return;
     txType = b.dataset.type;
     refreshTxFormType();
+    applyPayeeSuggestion();
   });
   document.getElementById('txModalClose').addEventListener('click', closeTxModal);
   document.getElementById('txModalCancel').addEventListener('click', closeTxModal);
@@ -178,7 +215,7 @@
   document.getElementById('txSaveTpl').addEventListener('click', () => {
     const amount = Number(document.getElementById('txAmount').value);
     const payee = document.getElementById('txPayee').value.trim();
-    if (!amount) { toast('金額を入力してから定型に保存してください'); return; }
+    if (!Number.isSafeInteger(amount) || amount <= 0) { toast('金額は1円以上の整数で入力してください'); return; }
     S.addTemplate({
       type: txType, amount,
       categoryId: txType === 'transfer' ? null : document.getElementById('txCategory').value,
@@ -198,38 +235,58 @@
     const memo = document.getElementById('txMemo').value.trim();
     const tags = document.getElementById('txTags').value.split(/[,、]/).map(s => s.trim()).filter(Boolean);
     const exclude = document.getElementById('txExclude').checked;
-    if (!date || !amount || amount <= 0) { toast('日付と金額を入力してください'); return; }
+    if (!date || !Number.isSafeInteger(amount) || amount <= 0) { toast('日付と1円以上の整数金額を入力してください'); return; }
     const data = { date, type: txType, amount, memo, payee, tags, exclude };
     if (txType === 'transfer') {
       const from = document.getElementById('txFromAccount').value;
       const to = document.getElementById('txToAccount').value;
-      if (from === to) { toast('振替元と振替先が同じです'); return; }
+      if (!from || !to || from === to) { toast('振替元と振替先を別の口座にしてください'); return; }
       data.fromAccountId = from; data.toAccountId = to;
       data.categoryId = null; data.accountId = null;
     } else {
       data.categoryId = document.getElementById('txCategory').value;
       data.accountId = document.getElementById('txAccount').value;
+      data.categorySource = document.getElementById('txCategory').dataset.suggested || 'manual';
+      data.categoryConfidence = Number(document.getElementById('txCategory').dataset.confidence) || null;
+      if (!data.categoryId) data.categoryId = null;
     }
+    try {
     if (id) {
       const before = S.updateTx(id, data);
-      // カテゴリを変更した場合、店舗があれば学習ルールを保存
-      if (before && data.categoryId && before.categoryId !== data.categoryId && payee) {
-        window.Classify.learn({ payee }, data.categoryId);
-        toast('更新しました。「' + payee + '」は今後このカテゴリにします', {
+      const ruleName = payee;
+      const ruleNorm = S.normalizeMerchantName(ruleName);
+      const previousRule = ruleName ? S.state.rules.find(r => r.normalizedName === ruleNorm && r.matchMode === 'exact') : null;
+      const previousRuleSnapshot = previousRule ? { ...previousRule } : null;
+      const learned = document.getElementById('txLearnRule').checked && payee && data.categoryId
+        ? window.Classify.learn({ payee }, data.categoryId, { merchantName: payee, matchMode: 'exact', priority: 100 }) : null;
+      if (before && learned && before.categoryBatchId) {
+        const batch = S.state.categoryChanges.find(x => x.id === before.categoryBatchId);
+        if (batch) { batch.learnedRules = [{ id: learned.id, previous: previousRuleSnapshot }]; S.save(); }
+      }
+      if (before && data.categoryId !== before.categoryId) {
+        toast('更新しました' + (learned ? '。分類ルールも保存しました' : ''), {
           actionLabel: '取り消す', onAction: () => {
-            S.updateTx(id, { categoryId: before.categoryId });
+            S.restoreTxList([before]);
+            if (learned && !before.categoryBatchId) {
+              const current = S.state.rules.find(r => r.id === learned.id);
+              if (previousRuleSnapshot) { if (current) Object.assign(current, previousRuleSnapshot); else S.state.rules.push({ ...previousRuleSnapshot }); }
+              else S.state.rules = S.state.rules.filter(r => r.id !== learned.id);
+              S.save();
+            }
             render();
           }
         });
       } else {
-        toast('更新しました');
+        toast(learned ? '分類ルールを保存しました' : '更新しました');
       }
     } else {
       S.addTx(data);
+      if (document.getElementById('txLearnRule').checked && payee && data.categoryId) window.Classify.learn({ payee }, data.categoryId, { merchantName: payee });
       toast('記録しました');
     }
     closeTxModal();
     render();
+    } catch (err) { toast(err.message); }
   });
 
   /* ---------- レシートOCR ---------- */
@@ -336,6 +393,7 @@
   const NAV = [
     { id: 'home', label: 'ホーム', icon: '🏠' },
     { id: 'transactions', label: '取引', icon: '📋' },
+    { id: 'categorize', label: '分類整理', icon: '🗂️' },
     { id: 'analysis', label: '分析', icon: '📊' },
     { id: 'budget', label: '予算', icon: '🎯' },
     { id: 'calendar', label: 'カレンダー', icon: '📅' },
@@ -344,7 +402,7 @@
     { id: 'data', label: 'データ', icon: '📂' },
     { id: 'settings', label: '設定', icon: '⚙️' },
   ];
-  const MOBILE_NAV = ['home', 'transactions', 'analysis', 'budget', 'menu'];
+  const MOBILE_NAV = ['home', 'transactions', 'categorize', 'budget', 'menu'];
 
   function buildNav() {
     // デスクトップ上部タブ
@@ -421,11 +479,20 @@
   };
 
   /* ---------- 初期化 ---------- */
+  window.addEventListener('kakeibo:storage-error', () => toast('保存に失敗しました。JSONバックアップを保存し、空き容量を確認してください', { duration: 10000 }));
+  window.addEventListener('kakeibo:storage-fallback', () => toast('IndexedDBに保存できないため、ブラウザーの予備保存先を使用しています', { duration: 10000 }));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') S.flush(); });
+  window.addEventListener('pagehide', () => S.flush());
   (async () => {
-    await S.init();
-    applyTheme();
-    S.applyRecurring(nowYm());
-    buildNav();
-    render();
+    try {
+      await S.init();
+      applyTheme();
+      S.applyRecurring(nowYm());
+      buildNav();
+      render();
+    } catch (err) {
+      main.innerHTML = '<div class="panel"><h2>保存データを読み込めません</h2><p>ブラウザーを再読み込みしてください。データを削除せず、問題が続く場合はバックアップを確認してください。</p></div>';
+      toast(err.message, { duration: 10000 });
+    }
   })();
 })();

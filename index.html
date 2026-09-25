@@ -59,7 +59,9 @@
       </label>
       <label id="txCategoryWrap" class="span2">カテゴリ
         <select id="txCategory"></select>
+        <span id="txCategorySuggestion" class="tx-category-suggestion" aria-live="polite"></span>
       </label>
+      <label id="txLearnRuleWrap" class="span2 check-row"><input type="checkbox" id="txLearnRule"><span>今後もこの店舗を同じカテゴリに自動分類する</span></label>
       <label id="txAccountWrap">支払い元
         <select id="txAccount"></select>
       </label>
@@ -121,6 +123,7 @@
 
 <script src="js/store.js"></script>
 <script src="js/classify.js"></script>
+<script src="js/category-workbench.js"></script>
 <script src="js/insights.js"></script>
 <script src="js/nlq.js"></script>
 <script src="js/csv.js"></script>
@@ -129,5 +132,6 @@
 <script src="js/charts.js"></script>
 <script src="js/app.js"></script>
 <script src="js/views.js"></script>
+<script src="js/category-view.js"></script>
 </body>
 </html>
