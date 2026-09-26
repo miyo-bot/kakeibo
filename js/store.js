@@ -136,6 +136,12 @@
   let lastSaveError = null;
   let revision = 0;
   let writeQueue = Promise.resolve();
+  let lastSavedSeq = 0;        // このタブが最後にストレージへ書き込んだ世代
+  let remoteConflict = null;   // {baseSeq, remoteSeq} 他タブと保存競合中
+  let remoteReloadTimer = null;
+  let tabId = null;
+  const LS_PING = LS_KEY + '.ping';
+  const BC_NAME = 'kakeibo.sync';
 
   function idbOpen() {
     return new Promise((resolve) => {
@@ -193,15 +199,20 @@
 
   function persist() {
     let json;
+    const seq = state.saveSequence || 0;
     try { json = JSON.stringify(state); } catch (e) { lastSaveError = e; return Promise.resolve(false); }
     writeQueue = writeQueue.then(async () => {
+      let ok = false;
       if (useIdb) {
-        if (await idbSet('state', json)) { lastSaveError = null; return true; }
+        if (await idbSet('state', json)) { lastSaveError = null; ok = true; }
+        else {
         useIdb = false;
         if (typeof window !== 'undefined') window.dispatchEvent(new Event('kakeibo:storage-fallback'));
+        }
       }
-      const ok = lsSave(json);
+      if (!ok) ok = lsSave(json);
       if (!ok && typeof window !== 'undefined') window.dispatchEvent(new Event('kakeibo:storage-error'));
+      if (ok) { lastSavedSeq = seq; broadcastWrite(seq); }
       return ok;
     });
     return writeQueue;
@@ -215,6 +226,92 @@
   function flush() {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     return persist();
+  }
+
+  /* ---------- 複数タブ同期 ----------
+   * BroadcastChannel（無ければ localStorage 'storage' イベント）で
+   * 書き込み世代を他タブへ通知する。
+   * - ローカルに未保存の変更がないタブ → ストレージから自動再読込
+   * - ローカルに未保存の変更があるタブ → remoteConflict を立てて
+   *   デバウンス保存を止め、UIが「最新に更新 / この内容で上書き」を選ぶ
+   */
+  function broadcastWrite(seq) {
+    if (typeof window === 'undefined') return;
+    try { if (_bc) _bc.postMessage({ seq: seq, by: tabId }); } catch (e) { /* noop */ }
+    try { localStorage.setItem(LS_PING, seq + ':' + Date.now()); } catch (e) { /* noop */ }
+  }
+
+  function onRemoteWrite(seq) {
+    if (typeof seq !== 'number' || seq <= lastSavedSeq) return 'ignore';
+    if (remoteConflict) return 'conflict';
+    if ((state.saveSequence || 0) > lastSavedSeq) {
+      // 自分にも未保存の変更がある → サイレント上書きを防ぐため保存を止める
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+      remoteConflict = { baseSeq: lastSavedSeq, remoteSeq: seq };
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('kakeibo:remote-conflict'));
+      return 'conflict';
+    }
+    // 未編集タブは少し待ってまとめて再読込
+    if (typeof window !== 'undefined') {
+      if (remoteReloadTimer) clearTimeout(remoteReloadTimer);
+      remoteReloadTimer = setTimeout(() => {
+        reload().then(changed => {
+          if (changed) window.dispatchEvent(new Event('kakeibo:remote-updated'));
+        });
+      }, 300);
+    }
+    return 'reload';
+  }
+
+  // ストレージから最新状態を読み直す。内容が変わっていれば true。
+  async function reload(options) {
+    const force = !!(options && options.force);
+    const lsData = lsLoad();
+    let idbState = null;
+    if (idb) {
+      const read = await idbGet('state');
+      if (read.ok && read.value) {
+        try { const s = JSON.parse(read.value); if (s && typeof s === 'object') idbState = migrate(s); } catch (e) { /* 破損 */ }
+      }
+    }
+    let candidate = null;
+    if (lsData && typeof lsData === 'object') candidate = migrate(lsData);
+    if (idbState && (!candidate || (idbState.saveSequence || 0) >= (candidate.saveSequence || 0))) candidate = idbState;
+    if (!candidate) return false;
+    if (!force && (candidate.saveSequence || 0) <= (state.saveSequence || 0) && (candidate.saveSequence || 0) <= lastSavedSeq) return false;
+    lastSavedSeq = candidate.saveSequence || 0;
+    if (remoteConflict) remoteConflict = null;
+    state = candidate;
+    _invalidate();
+    return true;
+  }
+
+  // 衝突解決: 'remote' = 他タブの内容を採用 / 'mine' = このタブの内容で上書き保存
+  function resolveRemoteConflict(choice) {
+    remoteConflict = null;
+    if (choice === 'remote') return reload({ force: true });
+    save(); // 自分の変更を保存して他タブへ通知
+    return flush();
+  }
+
+  let _bc = null;
+  function initSync() {
+    if (typeof window === 'undefined') return;
+    tabId = uid();
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        _bc = new BroadcastChannel(BC_NAME);
+        _bc.onmessage = e => {
+          const d = e && e.data;
+          if (d && d.by !== tabId && typeof d.seq === 'number') onRemoteWrite(d.seq);
+        };
+      }
+    } catch (e) { _bc = null; }
+    window.addEventListener('storage', e => {
+      if (!e || e.key !== LS_PING || !e.newValue) return;
+      const seq = Number(String(e.newValue).split(':')[0]);
+      if (seq) onRemoteWrite(seq);
+    });
   }
 
   // 起動: localStorage を即時ロード → IndexedDB があればそちらを優先
@@ -243,6 +340,8 @@
       useIdb = true;
     }
     _invalidate();
+    lastSavedSeq = state.saveSequence || 0;
+    initSync();
     return state;
   }
 
@@ -1003,12 +1102,16 @@
   // テスト用フック（Node から直接状態を差し替える）
   function _setState(s) { state = migrate(s); _invalidate(); }
   function _defaultState() { return defaultState(); }
+  function _setLastSavedSeq(n) { lastSavedSeq = n; }
 
   const api = {
     get state() { return state; },
     get revision() { return revision; },
     get lastSaveError() { return lastSaveError; },
     get storageKind() { return useIdb ? 'indexeddb' : 'localstorage'; },
+    get remoteConflict() { return remoteConflict; },
+    _onRemoteWrite: onRemoteWrite,
+    resolveRemoteConflict, reload,
     init, save, flush, uid,
     catById, accById, catsOf, catByName,
     txInMonth, txOfDay, monthTotals, byCategory, dailyTotals,
@@ -1027,7 +1130,7 @@
     exportCSV, exportJSON, importJSON,
     seedDemo, resetAll,
     ACCOUNT_KINDS,
-    _setState, _defaultState,
+    _setState, _defaultState, _setLastSavedSeq,
   };
 
   if (typeof window !== 'undefined') window.Store = api;

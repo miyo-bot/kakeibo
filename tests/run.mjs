@@ -650,4 +650,32 @@ await test('定期取引の一括削除は再生成せず、Undoで復元する'
   assert.equal(S.state.recurringSkipped.includes(recurring.id + ':2026-09'), false);
 });
 
+await test('複数タブ同期: 未編集タブは再読込、編集中タブは衝突、古い通知は無視', async () => {
+  fresh();
+  const base = S.state.saveSequence;
+  S._setLastSavedSeq(base);
+
+  // 未編集タブ: 新しい世代の通知で 'reload'
+  assert.equal(S._onRemoteWrite(base + 1), 'reload');
+  assert.equal(S.remoteConflict, null);
+
+  // 編集中タブ（ローカル変更あり）: 'conflict'
+  S.state.saveSequence = base + 1;            // ローカル変更を模擬
+  S._setLastSavedSeq(base);                    // まだストレージには書いていない
+  assert.equal(S._onRemoteWrite(base + 2), 'conflict');
+  assert.ok(S.remoteConflict);
+  assert.equal(S.remoteConflict.remoteSeq, base + 2);
+
+  // 衝突中の追加通知は 'conflict' のまま（黙って上書きされない）
+  assert.equal(S._onRemoteWrite(base + 9), 'conflict');
+
+  // 'mine' で解決 → 衝突解除
+  await S.resolveRemoteConflict('mine');
+  assert.equal(S.remoteConflict, null);
+
+  // 自分が書いた世代以降の古い通知は 'ignore'
+  S._setLastSavedSeq(S.state.saveSequence);
+  assert.equal(S._onRemoteWrite(S.state.saveSequence - 1), 'ignore');
+});
+
 console.log('\n✅ すべてのテストが完了しました');

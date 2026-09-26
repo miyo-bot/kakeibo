@@ -77,7 +77,11 @@
     if (onBind) onBind(body);
     document.getElementById('sheet').classList.remove('hidden');
   }
-  function closeSheet() { document.getElementById('sheet').classList.add('hidden'); }
+  // closeConflictSheet は宣言より前に呼ばれ得るため関数宣言で持ち上げる
+  function closeSheet() {
+    document.getElementById('sheet').classList.add('hidden');
+    if (typeof closeConflictSheet === 'function') closeConflictSheet();
+  }
   document.getElementById('sheetClose').addEventListener('click', closeSheet);
   document.getElementById('sheet').addEventListener('click', e => { if (e.target === document.getElementById('sheet')) closeSheet(); });
 
@@ -481,6 +485,52 @@
   /* ---------- 初期化 ---------- */
   window.addEventListener('kakeibo:storage-error', () => toast('保存に失敗しました。JSONバックアップを保存し、空き容量を確認してください', { duration: 10000 }));
   window.addEventListener('kakeibo:storage-fallback', () => toast('IndexedDBに保存できないため、ブラウザーの予備保存先を使用しています', { duration: 10000 }));
+  /* ---------- 複数タブ同期 ---------- */
+  let conflictSheetOpen = false;
+  window.addEventListener('kakeibo:remote-updated', () => {
+    toast('他のタブの変更を反映しました');
+    render();
+  });
+  function closeConflictSheet() {
+    // 明示選択なしに閉じた場合は「このタブで上書き」として扱い、
+    // どちらかの変更が黙って消えるのを防ぐ
+    if (conflictSheetOpen && S.remoteConflict) {
+      conflictSheetOpen = false;
+      S.resolveRemoteConflict('mine');
+      toast('このタブの変更を保存しました');
+      return true;
+    }
+    conflictSheetOpen = false;
+    return false;
+  }
+  function showConflictSheet() {
+    if (conflictSheetOpen) return;
+    conflictSheetOpen = true;
+    openSheet('変更の競合',
+      '<p class="muted">別のタブでも家計簿が更新されました。どちらの内容を残すか選んでください。選ばずに閉じた場合はこのタブの変更を保存します。</p>'
+      + '<div class="sheet-list">'
+      + '<button class="sheet-item" id="cfUseRemote"><span class="icon">🔄</span>他タブの最新に更新<span class="muted">このタブの未保存の変更は破棄されます</span></button>'
+      + '<button class="sheet-item" id="cfUseMine"><span class="icon">✏️</span>このタブの変更で上書き<span class="muted">他タブの変更は上書きされます</span></button>'
+      + '</div>');
+    const remote = document.getElementById('cfUseRemote');
+    const mine = document.getElementById('cfUseMine');
+    if (remote) remote.addEventListener('click', async () => {
+      conflictSheetOpen = false;
+      closeSheet();
+      await S.resolveRemoteConflict('remote');
+      toast('最新の内容に更新しました');
+      render();
+    });
+    if (mine) mine.addEventListener('click', async () => {
+      conflictSheetOpen = false;
+      closeSheet();
+      await S.resolveRemoteConflict('mine');
+      toast('このタブの変更を保存しました');
+      render();
+    });
+  }
+  window.addEventListener('kakeibo:remote-conflict', showConflictSheet);
+
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') S.flush(); });
   window.addEventListener('pagehide', () => S.flush());
   (async () => {
